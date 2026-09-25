@@ -69,13 +69,13 @@ Traverses a specific layer using dynamic candidate heaps:
 - A max-heap $W$ tracks the $ef$ best discovered neighbors, ordered by distance descending.
 - Traversal halts when the closest candidate in $C$ is further than the furthest neighbor in $W$.
 
-### 3. Heuristic Neighbor Selection with Diversity Pruning
+### 3. Heuristic Neighbor Selection with Diversity Pruning & Bi-directional Integrity
 Standard simple neighbor selection connects only the absolute nearest nodes, causing dense clustering. Atlas Vector implements Algorithm 4 (`SELECT-NEIGHBORS-HEURISTIC`):
 - A candidate $e$ is connected to base vector $q$ only if $e$ is closer to $q$ than to any already chosen neighbor $r \in R$:
 
 $$\text{dist}(e, q) < \text{dist}(e, r) \quad \forall r \in R$$
 
-This forces links to span different directional quadrants, ensuring navigable small-world properties.
+- **Bi-directional Edge Integrity**: When a node prunes connections that exceed maximum degree limits ($M$ or $M_0$), reverse links from disconnected nodes are symmetrically discarded to eliminate dangling or asymmetric edges.
 
 ---
 
@@ -88,27 +88,29 @@ The benchmark suite (`tests/evaluation/run_benchmark.py`) runs reproducible eval
 ### Section 1: Scalability Across Dataset Sizes
 Parameters: $D = 64$, Metric = Cosine, $M = 16$, $M_0 = 32$, $efConstruction = 100$, $efSearch = 50$, 100 queries.
 
-| Dataset Size ($N$) | Build Time (s) | Indexing (vec/s) | Recall@1 | Recall@10 | QPS (Queries/s) | p50 Latency (ms) | p95 Latency (ms) |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **500** | 11.83 s | 42.3 | **1.000** | **1.000** | **455.3** | 2.083 ms | 3.038 ms |
-| **2,000** | 81.28 s | 24.6 | **1.000** | **0.979** | **227.9** | 4.373 ms | 5.133 ms |
-| **5,000** | 272.56 s | 18.3 | **0.950** | **0.895** | **180.8** | 5.278 ms | 6.938 ms |
+| Dataset Size ($N$) | Build Time (s) | Indexing (vec/s) | Recall@1 | Recall@10 | QPS (Queries/s) | p50 (ms) | p95 (ms) | p99 (ms) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **500** | 6.99 s | 71.5 | **1.000** | **1.000** | **459.1** | 2.011 ms | 2.949 ms | 3.422 ms |
+| **2,000** | 45.71 s | 43.8 | **0.990** | **0.981** | **247.0** | 4.015 ms | 4.661 ms | 5.090 ms |
+| **5,000** | 179.16 s | 27.9 | **0.940** | **0.905** | **129.2** | 7.321 ms | 11.780 ms | 12.350 ms |
 
 ### Section 2: Recall@10 vs. QPS Trade-Off ($efSearch$ Parameter Sweep)
 Evaluated on $N = 2,000$ vectors ($D = 64$, Cosine, $k = 10$):
 
-| $efSearch$ Depth | Recall@10 | Throughput (QPS) | p50 Latency (ms) | p95 Latency (ms) |
-| :--- | :--- | :--- | :--- | :--- |
-| **10** | 0.692 | **625.8** | **1.477 ms** | 2.507 ms |
-| **20** | 0.848 | 443.0 | 2.179 ms | 3.121 ms |
-| **50** | 0.979 | 241.6 | 3.886 ms | 5.092 ms |
-| **100** | **0.999** | 158.3 | 5.970 ms | 7.823 ms |
-| **200** | **1.000** | 131.7 | 7.446 ms | 9.387 ms |
+| $efSearch$ Depth | Recall@10 | Throughput (QPS) | p50 Latency (ms) | p95 Latency (ms) | p99 Latency (ms) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **10** | 0.697 | **297.3** | **2.873 ms** | 6.711 ms | 8.841 ms |
+| **20** | 0.841 | 169.6 | 5.173 ms | 11.311 ms | 13.896 ms |
+| **50** | 0.981 | 145.9 | 6.221 ms | 10.116 ms | 14.038 ms |
+| **100** | **0.998** | 73.9 | 12.355 ms | 23.007 ms | 32.644 ms |
+| **200** | **1.000** | 70.9 | 12.181 ms | 22.370 ms | 36.745 ms |
 
-### Section 3: Persistence Durability
-- **Snapshot Serialization Time**: **7.75 ms** (atomic `.tmp` replace)
-- **Snapshot Deserialization Time**: **13.35 ms** (cold start load)
-- **Reconstruction Integrity**: 100% vector, metadata, and graph topology fidelity.
+### Section 3: Persistence Durability & Full Engine Crash Recovery
+- **Physical Disk Sync (`os.fsync`)**: Both WAL appends and binary snapshot flushes invoke `os.fsync(fileno)` before returning to guarantee power-loss durability.
+- **Collection Catalog Auto-Recovery**: Engine maintains `catalog.json` with all registered collection schemas, automatically re-instantiating collections and replaying WAL deltas on startup.
+- **Raw Snapshot Serialization Time**: **28.08 ms** (atomic `.tmp` replace with `fsync`)
+- **Raw Snapshot Deserialization Time**: **41.90 ms** (cold start load)
+- **Full Engine Crash Recovery (Snapshot + WAL Replay)**: **2,627.38 ms** (400 base vectors restored from snapshot + 100 WAL upserts + 20 WAL deletes replayed, verifying 480 active vectors).
 
 ---
 

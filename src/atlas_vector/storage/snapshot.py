@@ -1,6 +1,7 @@
-"""Binary snapshot serialization and deserialization for HNSW index state."""
+"""Binary snapshot serialization and deserialization for HNSW index state with fsync durability."""
 from __future__ import annotations
 
+import os
 import pickle
 from pathlib import Path
 
@@ -8,12 +9,14 @@ from src.atlas_vector.index.hnsw import HNSWIndex
 
 
 def save_snapshot(index: HNSWIndex, path: str | Path) -> None:
-    """Serializes complete HNSW index state to a binary snapshot file."""
+    """Serializes complete HNSW index state to a binary snapshot file with fsync and atomic rename."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_target = target.with_suffix(".tmp")
     with temp_target.open("wb") as handle:
         pickle.dump(index, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        handle.flush()
+        os.fsync(handle.fileno())
     temp_target.replace(target)
 
 

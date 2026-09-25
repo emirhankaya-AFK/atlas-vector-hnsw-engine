@@ -239,8 +239,14 @@ class HNSWIndex:
 
         base_vec = self.vectors[vector_id]
         candidates = [(self._dist(base_vec, self.vectors[nid]), nid) for nid in current_neighbors]
-        pruned = self._select_neighbors_heuristic(base_vec, candidates, max_m)
-        self.links[vector_id][layer] = set(pruned)
+        pruned = set(self._select_neighbors_heuristic(base_vec, candidates, max_m))
+        removed = current_neighbors - pruned
+        self.links[vector_id][layer] = pruned
+
+        # Symmetrically prune reverse connections to maintain bi-directional link integrity
+        for removed_id in removed:
+            if removed_id in self.links and layer in self.links[removed_id]:
+                self.links[removed_id][layer].discard(vector_id)
 
     def search(
         self,

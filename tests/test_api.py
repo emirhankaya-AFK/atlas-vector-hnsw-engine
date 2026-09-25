@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app, engine
+from src.atlas_vector.engine import AtlasEngine
 
 
 @pytest.fixture(autouse=True)
@@ -205,3 +206,41 @@ def test_full_api_smoke_lifecycle(client: TestClient) -> None:
     r5 = client.get("/collections/smoke_collection/stats")
     assert r5.status_code == 200
     assert r5.json()["active_vectors"] == 2
+
+
+def test_api_restart_preserves_collections_and_vectors(tmp_path, monkeypatch) -> None:
+    # 1. Point engine to isolated temporary storage
+    test_engine = AtlasEngine(data_dir=tmp_path, auto_recover=False)
+    monkeypatch.setattr("api.main.engine", test_engine)
+
+    with TestClient(app) as c1:
+        c1.post("/collections", json={"name": "kb_restart", "dimension": 2, "metric": "l2"})
+        c1.post("/collections/kb_restart/vectors", json={"id": "v1", "vector": [1.0, 1.0], "metadata": {"lang": "en"}})
+        c1.post("/collections/kb_restart/vectors", json={"id": "v2", "vector": [2.0, 2.0], "metadata": {"lang": "tr"}})
+        c1.post("/collections/kb_restart/snapshot")
+        c1.post("/collections/kb_restart/vectors", json={"id": "v3", "vector": [3.0, 3.0], "metadata": {"lang": "tr"}})
+        c1.delete("/collections/kb_restart/vectors/v1")
+
+    # 2. Simulate complete application process reboot
+    rebooted_engine = AtlasEngine(data_dir=tmp_path, auto_recover=True)
+    monkeypatch.setattr("api.main.engine", rebooted_engine)
+
+    with TestClient(app) as c2:
+        list_resp = c2.get("/collections")
+        assert list_resp.status_code == 200
+        cols = [col["name"] for col in list_resp.json()["collections"]]
+        assert "kb_restart" in cols
+
+        query_resp = c2.post(
+            "/collections/kb_restart/query",
+            json={"vector": [2.9, 3.1], "k": 5},
+        )
+        assert query_resp.status_code == 200
+        result_ids = [r["id"] for r in query_resp.json()["results"]]
+        assert "v3" in result_ids
+        assert "v2" in result_ids
+        assert "v1" not in result_ids
+
+        stats_resp = c2.get("/collections/kb_restart/stats")
+        assert stats_resp.status_code == 200
+        assert stats_resp.json()["active_vectors"] == 2

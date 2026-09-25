@@ -133,3 +133,33 @@ def test_multi_collection_engine(tmp_path: Path) -> None:
     # Delete collection
     assert engine.delete_collection("products") is True
     assert len(engine.collections) == 1
+
+
+def test_catalog_persistence_and_engine_restart(tmp_path: Path) -> None:
+    # 1. Start engine, create collections and persist data
+    engine1 = AtlasEngine(data_dir=tmp_path, auto_recover=False)
+    col = engine1.create_collection("docs", dimension=2, metric="l2")
+    col.upsert("d1", [1.0, 1.0], {"title": "Doc 1"})
+    col.upsert("d2", [2.0, 2.0], {"title": "Doc 2"})
+    col.snapshot()
+    col.upsert("d3", [3.0, 3.0], {"title": "Doc 3"})
+    col.delete("d1")
+
+    # Catalog manifest must exist on disk
+    assert (tmp_path / "catalog.json").exists()
+
+    # 2. Simulate total process death and fresh engine startup with auto_recover
+    engine2 = AtlasEngine(data_dir=tmp_path, auto_recover=True)
+    assert "docs" in engine2.collections
+
+    recovered_col = engine2.get("docs")
+    assert recovered_col.dimension == 2
+    assert recovered_col.metric == "l2"
+
+    # Query the recovered collection
+    results = recovered_col.query([2.9, 3.1], k=5)
+    result_ids = [r["id"] for r in results]
+    assert "d3" in result_ids
+    assert "d2" in result_ids
+    assert "d1" not in result_ids  # Tombstoned vector was replayed and remains excluded
+

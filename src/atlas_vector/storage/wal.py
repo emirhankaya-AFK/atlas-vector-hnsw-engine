@@ -1,8 +1,9 @@
-"""Append-only JSONL write-ahead log for durable crash recovery."""
+"""Append-only JSONL write-ahead log for durable crash recovery with strict fsync."""
 from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -10,17 +11,18 @@ logger = logging.getLogger(__name__)
 
 
 class WriteAheadLog:
-    """Manages append-only JSONL write-ahead logging with replay capabilities."""
+    """Manages append-only JSONL write-ahead logging with replay capabilities and physical fsync."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def append(self, operation: dict[str, Any]) -> None:
-        """Appends a single JSON operation record and flushes to disk."""
+        """Appends a single JSON operation record and flushes + fsyncs to physical disk."""
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(operation, separators=(",", ":")) + "\n")
             handle.flush()
+            os.fsync(handle.fileno())
 
     def replay(self) -> Iterable[dict[str, Any]]:
         """Replays all logged operations in chronological order, ignoring corrupted records."""

@@ -1,6 +1,7 @@
 """FastAPI REST Service for Atlas Vector HNSW Engine."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import os
 from typing import Any
 
@@ -11,7 +12,15 @@ from pydantic import BaseModel, Field
 from src.atlas_vector.engine import AtlasEngine
 
 DATA_DIR = os.environ.get("ATLAS_DATA_DIR", "data")
-engine = AtlasEngine(data_dir=DATA_DIR)
+engine = AtlasEngine(data_dir=DATA_DIR, auto_recover=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Ensures collection catalog is loaded and indexes recovered on application startup."""
+    engine.load_catalog_and_recover()
+    yield
+
 
 app = FastAPI(
     title="Atlas Vector — Educational HNSW ANN Search Engine",
@@ -20,6 +29,7 @@ app = FastAPI(
         "Educational and reproducible HNSW approximate nearest neighbor search engine "
         "with Write-Ahead Log (WAL) persistence, exact FlatIndex baseline, and metadata filtering."
     ),
+    lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )

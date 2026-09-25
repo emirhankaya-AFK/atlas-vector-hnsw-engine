@@ -5,12 +5,13 @@ Evaluates:
 - Recall@1 and Recall@10 against exact FlatIndex ground truth
 - Query throughput (QPS) and latency distribution (p50, p95, p99)
 - Recall vs. QPS trade-off across varying efSearch values [10, 20, 50, 100, 200]
-- Persistence Snapshot & Recovery timing
+- Persistence & Durability: Atomic Snapshot + WAL Replay Engine Crash Recovery
 """
 from __future__ import annotations
 
 import os
 import platform
+import shutil
 import sys
 import time
 from typing import Any
@@ -20,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 import numpy as np
 
+from src.atlas_vector.engine import VectorCollection
 from src.atlas_vector.index.flat import FlatIndex
 from src.atlas_vector.index.hnsw import HNSWIndex
 from src.atlas_vector.storage.snapshot import load_snapshot, save_snapshot
@@ -71,9 +73,7 @@ def benchmark_dataset_size(
     train_vectors, query_vectors = generate_benchmark_data(n_vectors, dimension, seed=seed)
 
     # 1. Ground truth calculation
-    gt_start = time.perf_counter()
     ground_truth = compute_ground_truth(train_vectors, query_vectors, metric=metric, k=10)
-    _ = time.perf_counter() - gt_start
 
     # 2. HNSW Index Construction
     hnsw = HNSWIndex(
@@ -173,19 +173,20 @@ def benchmark_ef_tradeoff(
             "qps": qps,
             "p50_ms": float(np.percentile(latencies_ms, 50)),
             "p95_ms": float(np.percentile(latencies_ms, 95)),
+            "p99_ms": float(np.percentile(latencies_ms, 99)),
         })
     return tradeoff_results
 
 
 def run_all_benchmarks() -> bool:
-    print("=" * 80)
+    print("=" * 90)
     print("  ATLAS VECTOR — HNSW ANN SEARCH ENGINE & BENCHMARK LAB")
     print("  Reproducible Quantitative Benchmark Execution")
-    print("=" * 80)
+    print("=" * 90)
     print(f"Platform: {platform.system()} {platform.release()} ({platform.machine()})")
     print(f"Python:   {sys.version.split()[0]}")
     print(f"CPU:      {os.cpu_count()} logical cores")
-    print("-" * 80)
+    print("-" * 90)
 
     dataset_sizes = [500, 2000, 5000]
     dimension = 64
@@ -199,22 +200,23 @@ def run_all_benchmarks() -> bool:
         results_by_size.append(res)
         print(f" Done in {res['build_time_sec']:.2f}s (Recall@10: {res['recall_at_10']:.3f}, QPS: {res['qps']:.1f})")
 
-    # Print Summary Table
-    print("\n" + "=" * 80)
-    print(f"{'Size (N)':<10} | {'Build (s)':<10} | {'Build QPS':<11} | {'Recall@1':<10} | {'Recall@10':<10} | {'QPS':<8} | {'p50 (ms)':<9} | {'p95 (ms)':<9}")
-    print("-" * 80)
+    # Print Summary Table with p50, p95, p99
+    print("\n" + "=" * 90)
+    print(f"{'Size (N)':<9} | {'Build (s)':<10} | {'Build QPS':<10} | {'Recall@1':<9} | {'Recall@10':<10} | {'QPS':<7} | {'p50 (ms)':<9} | {'p95 (ms)':<9} | {'p99 (ms)':<9}")
+    print("-" * 90)
     for r in results_by_size:
         print(
-            f"{r['n_vectors']:<10} | "
+            f"{r['n_vectors']:<9} | "
             f"{r['build_time_sec']:<10.2f} | "
-            f"{r['indexing_throughput']:<11.1f} | "
-            f"{r['recall_at_1']:<10.3f} | "
+            f"{r['indexing_throughput']:<10.1f} | "
+            f"{r['recall_at_1']:<9.3f} | "
             f"{r['recall_at_10']:<10.3f} | "
-            f"{r['qps']:<8.1f} | "
+            f"{r['qps']:<7.1f} | "
             f"{r['latency_p50_ms']:<9.3f} | "
-            f"{r['latency_p95_ms']:<9.3f}"
+            f"{r['latency_p95_ms']:<9.3f} | "
+            f"{r['latency_p99_ms']:<9.3f}"
         )
-    print("=" * 80)
+    print("=" * 90)
 
     # Section 2: efSearch Trade-off on 2,000 vectors
     print("\n[SECTION 2] Recall vs. QPS Trade-Off Exploration (N=2000, D=64):")
@@ -227,23 +229,29 @@ def run_all_benchmarks() -> bool:
         ef_values,
     )
 
-    print(f"{'efSearch':<10} | {'Recall@10':<12} | {'QPS':<10} | {'p50 Latency (ms)':<18} | {'p95 Latency (ms)':<18}")
-    print("-" * 75)
+    print(f"{'efSearch':<9} | {'Recall@10':<10} | {'QPS':<8} | {'p50 Latency (ms)':<17} | {'p95 Latency (ms)':<17} | {'p99 Latency (ms)':<17}")
+    print("-" * 88)
     for t in tradeoffs:
         print(
-            f"{t['ef_search']:<10} | "
-            f"{t['recall_at_10']:<12.3f} | "
-            f"{t['qps']:<10.1f} | "
-            f"{t['p50_ms']:<18.3f} | "
-            f"{t['p95_ms']:<18.3f}"
+            f"{t['ef_search']:<9} | "
+            f"{t['recall_at_10']:<10.3f} | "
+            f"{t['qps']:<8.1f} | "
+            f"{t['p50_ms']:<17.3f} | "
+            f"{t['p95_ms']:<17.3f} | "
+            f"{t['p99_ms']:<17.3f}"
         )
-    print("-" * 75)
+    print("-" * 88)
 
-    # Section 3: Persistence Snapshot & Recovery Timing
-    print("\n[SECTION 3] Persistence & Durability Verification:")
+    # Section 3: Persistence Snapshot & Engine WAL Crash Recovery Benchmark
+    print("\n[SECTION 3] Persistence & Durability: Full Engine Crash Recovery Benchmark:")
+    bench_data_dir = "data/bench_durability"
+    if os.path.exists(bench_data_dir):
+        shutil.rmtree(bench_data_dir)
+    os.makedirs(bench_data_dir, exist_ok=True)
+
+    # 3.1 Raw Snapshot Serialization
     hnsw_sample = results_by_size[0]["hnsw_instance"]
-    temp_snap_path = "data/bench_test.snapshot"
-    os.makedirs("data", exist_ok=True)
+    temp_snap_path = os.path.join(bench_data_dir, "raw_test.snapshot")
 
     t_snap_start = time.perf_counter()
     save_snapshot(hnsw_sample, temp_snap_path)
@@ -253,12 +261,40 @@ def run_all_benchmarks() -> bool:
     restored_hnsw = load_snapshot(temp_snap_path)
     load_time = (time.perf_counter() - t_load_start) * 1000.0
 
-    if os.path.exists(temp_snap_path):
-        os.remove(temp_snap_path)
+    print(f"  ✓ Raw Snapshot serialization (N=500, fsync)  : {snap_time:.2f} ms")
+    print(f"  ✓ Raw Snapshot deserialization (N=500)       : {load_time:.2f} ms")
+    print(f"  ✓ Restored raw vectors verified              : {len(restored_hnsw.vectors)} vectors")
 
-    print(f"  ✓ Snapshot serialization time : {snap_time:.2f} ms")
-    print(f"  ✓ Snapshot deserialization time: {load_time:.2f} ms")
-    print(f"  ✓ Restored vectors verified    : {len(restored_hnsw.vectors)} vectors")
+    # 3.2 Full Engine Crash Recovery (Snapshot + WAL Replay)
+    col = VectorCollection("recovery_bench", dimension=dimension, metric="cosine", data_dir=bench_data_dir)
+    train_vecs, _ = generate_benchmark_data(500, dimension, seed=77)
+    for i in range(400):
+        col.upsert(f"doc_{i}", train_vecs[i].tolist(), {"category": "base"})
+
+    # Checkpoint snapshot
+    col.snapshot()
+
+    # Append 100 post-snapshot records to WAL and delete 20
+    for i in range(400, 500):
+        col.upsert(f"doc_{i}", train_vecs[i].tolist(), {"category": "wal_delta"})
+    for i in range(20):
+        col.delete(f"doc_{i}")
+
+    # Simulate crash: recreate collection instance and measure recovery time
+    t_rec_start = time.perf_counter()
+    crashed_col = VectorCollection("recovery_bench", dimension=dimension, metric="cosine", data_dir=bench_data_dir)
+    crashed_col.recover()
+    full_recovery_time_ms = (time.perf_counter() - t_rec_start) * 1000.0
+
+    active_count = len(crashed_col.index.vectors) - len(crashed_col.index.deleted)
+    expected_count = 500 - 20
+    print(f"  ✓ Full Engine Recovery Time (Snapshot + WAL) : {full_recovery_time_ms:.2f} ms")
+    print(f"  ✓ Recovered Active Vectors Count             : {active_count} (Expected: {expected_count})")
+    assert active_count == expected_count, f"Recovery count mismatch: {active_count} vs {expected_count}"
+
+    # Cleanup benchmark directory
+    if os.path.exists(bench_data_dir):
+        shutil.rmtree(bench_data_dir)
 
     # Quantitative Assertions
     print("\n[BENCHMARK ASSERTIONS]")

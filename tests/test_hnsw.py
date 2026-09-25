@@ -140,7 +140,7 @@ def test_metadata_filtering() -> None:
 
     # Filter single field
     res_tr = index.search([1.0, 1.0], k=5, where={"tenant": "tr"})
-    assert set(vid for vid, _ in res_tr) == {"v1", "v3"}
+    assert {vid for vid, _ in res_tr} == {"v1", "v3"}
 
     # Filter multiple fields
     res_tr_prod = index.search([1.0, 1.0], k=5, where={"tenant": "tr", "env": "prod"})

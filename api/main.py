@@ -1,8 +1,8 @@
 """FastAPI REST Service for Atlas Vector HNSW Engine."""
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Path, status

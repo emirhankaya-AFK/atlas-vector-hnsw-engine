@@ -173,7 +173,7 @@ class AtlasEngine:
                     col.recover()
                     self.collections[name] = col
                     logger.info("Successfully recovered collection '%s' with %d active vectors", name, len(col.index.vectors) - len(col.index.deleted))
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
             logger.error("Failed to load catalog from %s: %s", self.catalog_path, exc)
 
     def create_collection(

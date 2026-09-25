@@ -125,7 +125,7 @@ def upsert_vector(
         col.upsert(payload.id, payload.vector, payload.metadata)
         return {"status": "upserted", "id": payload.id, "collection": name}
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
 @app.post("/collections/{name}/vectors/batch", status_code=status.HTTP_201_CREATED, tags=["Vectors"])
@@ -146,7 +146,7 @@ def batch_upsert_vectors(
             upserted_ids.append(item.id)
         except ValueError as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Error inserting vector '{item.id}': {exc}",
             ) from exc
 
@@ -179,7 +179,7 @@ def query_vectors(
             "results": results,
         }
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
 @app.delete("/collections/{name}/vectors/{vector_id}", tags=["Vectors"])

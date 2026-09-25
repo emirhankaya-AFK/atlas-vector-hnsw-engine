@@ -1,0 +1,29 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: atlas-vector-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ATLAS_DATA_DIR=/app/data
+    volumes:
+      - atlas-data:/app/data
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: atlas-vector-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - ATLAS_API_URL=http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  atlas-data:
